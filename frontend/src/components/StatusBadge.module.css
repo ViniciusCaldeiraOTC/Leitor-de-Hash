@@ -1,0 +1,44 @@
+.badge {
+  display: block;
+  width: max-content;
+  min-width: max-content;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.badge.OK {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--success);
+}
+
+.badge.DIVERGENCIA_VALOR {
+  background: rgba(251, 191, 36, 0.2);
+  color: var(--warning);
+}
+
+.badge.DIVERGENCIA_REDE_MOEDA {
+  background: rgba(251, 191, 36, 0.2);
+  color: var(--warning);
+}
+
+.badge.HASH_NAO_ENCONTRADO {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--error);
+}
+
+.badge.DUPLICIDADE {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--error);
+}
+
+.badge.CORRECAO_PLANILHA {
+  background: rgba(56, 189, 248, 0.2);
+  color: var(--accent);
+}
