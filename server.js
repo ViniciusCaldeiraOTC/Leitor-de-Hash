@@ -325,6 +325,18 @@ app.post('/api/relatorio-google-sheets', async (req, res) => {
       }
     }
 
+    if (spreadsheetId && process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
+      try {
+        await sheets.spreadsheets.values.clear({
+          spreadsheetId,
+          range: `'${sheetTabName}'!A:ZZ`,
+        });
+        log('Aba limpa antes de escrever (evita acumular análises antigas)');
+      } catch (clearErr) {
+        log('Clear da aba (pode não existir ainda):', clearErr.message);
+      }
+    }
+
     log('Escrevendo valores, range:', range);
     await sheets.spreadsheets.values.update({
       spreadsheetId,
