@@ -190,7 +190,8 @@ async function consultarEtherscan(hash, apiKey) {
       const dataReceipt = resReceipt.data;
       const debug = process.env.DEBUG_ETHERSCAN === '1' || process.env.DEBUG_ETHERSCAN === 'true';
       if (dataReceipt.error) {
-        if (debug) console.warn('[Etherscan] receipt error:', JSON.stringify(dataReceipt.error));
+        const errMsg = (dataReceipt.error.message || dataReceipt.error).toString().slice(0, 120);
+        console.warn('[Etherscan] receipt error:', errMsg, '| Status:', resReceipt.status);
         return null;
       }
       const rawResult = dataReceipt.result;
@@ -255,11 +256,17 @@ async function consultarEtherscan(hash, apiKey) {
         endereco_destino: toAddr || undefined,
       };
     } catch (err) {
-      if (debug && tentativa === 0) console.warn('[Etherscan] exceção:', err.message, err.response?.status, err.response?.data ? JSON.stringify(err.response.data).slice(0, 120) : '');
+      const status = err.response?.status;
+      const errData = err.response?.data;
+      if (tentativa === 0) {
+        const msg = (errData?.message || errData?.error || err.message || '').toString().slice(0, 100);
+        console.warn('[Etherscan] exceção:', err.message, '| HTTP', status, msg ? '|' : '', msg);
+      }
       if (err.response && err.response.status === 404) return null;
       if (err.response?.data?.error && err.response?.status !== 429) return null;
       if (err.response?.status === 429 && tentativa < MAX_TENTATIVAS_429) {
         tentativa++;
+        console.warn('[Etherscan] rate limit 429, aguardando', DELAY_APOS_429_MS, 'ms antes de retry', tentativa);
         await delay(DELAY_APOS_429_MS);
         continue;
       }
