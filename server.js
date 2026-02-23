@@ -443,8 +443,8 @@ function getGoogleCredentials() {
   return credentials;
 }
 
-/** Cabeçalhos da planilha modelo (sempre em branco: só esta linha). */
-const COLUNAS_MODELO = ['Cliente', 'Valor ME', 'REDE', 'Moeda', 'Hash'];
+/** Cabeçalhos da planilha modelo (sempre em branco: só esta linha). Ordem: REDE, Moeda, Valor ME, Cliente, Hash. */
+const COLUNAS_MODELO = ['REDE', 'Moeda', 'Valor ME', 'Cliente', 'Hash'];
 
 /** Abre a planilha modelo no Google Sheets. Limpa a primeira aba e deixa só os cabeçalhos (sempre em branco). */
 app.post('/api/modelo-google-sheets', async (req, res) => {
@@ -454,7 +454,7 @@ app.post('/api/modelo-google-sheets', async (req, res) => {
   const modeloSpreadsheetId = (process.env.GOOGLE_SHEETS_MODELO_SPREADSHEET_ID || '').trim();
   if (!modeloSpreadsheetId) {
     res.status(503).json({
-      erro: 'Planilha modelo não configurada. Defina GOOGLE_SHEETS_MODELO_SPREADSHEET_ID no .env (ID da planilha de entrada: Cliente, Valor ME, REDE, Moeda, Hash). Não use a planilha de relatório.',
+      erro: 'Planilha modelo não configurada. Defina GOOGLE_SHEETS_MODELO_SPREADSHEET_ID no .env (ID da planilha de entrada: REDE, Moeda, Valor ME, Cliente, Hash). Não use a planilha de relatório.',
     });
     return;
   }

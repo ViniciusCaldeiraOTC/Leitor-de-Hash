@@ -326,7 +326,7 @@ export default function App() {
       </main>
 
       <footer className={styles.footer}>
-        <p>Planilha com colunas: Cliente, Valor ME, REDE, Moeda, Hash</p>
+        <p>Planilha com colunas: REDE, Moeda, Valor ME, Cliente, Hash</p>
       </footer>
     </div>
   );
