@@ -443,8 +443,11 @@ function getGoogleCredentials() {
   return credentials;
 }
 
-/** Abre a planilha modelo no Google Sheets. Usa só GOOGLE_SHEETS_MODELO_SPREADSHEET_ID; nunca a de relatório. */
-app.post('/api/modelo-google-sheets', (req, res) => {
+/** Cabeçalhos da planilha modelo (sempre em branco: só esta linha). */
+const COLUNAS_MODELO = ['Cliente', 'Valor ME', 'REDE', 'Moeda', 'Hash'];
+
+/** Abre a planilha modelo no Google Sheets. Limpa a primeira aba e deixa só os cabeçalhos (sempre em branco). */
+app.post('/api/modelo-google-sheets', async (req, res) => {
   const log = (msg, ...args) => console.log('[Modelo Google Sheets]', msg, ...args);
   log('POST /api/modelo-google-sheets');
 
@@ -452,6 +455,49 @@ app.post('/api/modelo-google-sheets', (req, res) => {
   if (!modeloSpreadsheetId) {
     res.status(503).json({
       erro: 'Planilha modelo não configurada. Defina GOOGLE_SHEETS_MODELO_SPREADSHEET_ID no .env (ID da planilha de entrada: Cliente, Valor ME, REDE, Moeda, Hash). Não use a planilha de relatório.',
+    });
+    return;
+  }
+
+  const credentials = getGoogleCredentials();
+  if (!credentials) {
+    res.status(503).json({
+      erro: 'Google Sheets não configurado. Defina GOOGLE_SERVICE_ACCOUNT_JSON para limpar e resetar a planilha modelo.',
+    });
+    return;
+  }
+
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId: modeloSpreadsheetId,
+      fields: 'sheets.properties.sheetId,sheets.properties.title',
+    });
+    const firstSheet = meta.data.sheets && meta.data.sheets[0];
+    const nomePrimeiraAba = firstSheet && firstSheet.properties ? (firstSheet.properties.title || 'Sheet1') : 'Sheet1';
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: modeloSpreadsheetId,
+      range: `'${nomePrimeiraAba}'!A:ZZ`,
+    });
+    log('Planilha modelo limpa');
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: modeloSpreadsheetId,
+      range: `'${nomePrimeiraAba}'!A1:E1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [COLUNAS_MODELO] },
+    });
+    log('Cabeçalhos escritos (planilha em branco)');
+  } catch (err) {
+    console.error('[Modelo Google Sheets]', err.message);
+    res.status(500).json({
+      erro: err.message || 'Erro ao resetar planilha modelo no Google Sheets.',
     });
     return;
   }
