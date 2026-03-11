@@ -7,7 +7,7 @@
  */
 const { carregarPlanilha, extrairHashesUnicos } = require('./planilha');
 const { consultarBlockchain, consultarAmbasRedes } = require('./blockchain');
-const { validarValores, TOLERANCIA } = require('./validacao');
+const { validarValores, TOLERANCIA, arredondar2 } = require('./validacao');
 const { gerarRelatorio, listarInconsistencias } = require('./relatorio');
 const { getCarteirasClientes, normalizarEndereco } = require('./config');
 const path = require('path');
@@ -58,9 +58,80 @@ async function runValidation(planilhaPath, opts = {}) {
     log(`Intervalo entre consultas: ${delayEntreConsultas}ms (evita rate limit 429).`);
   }
   onProgress(0, hashesUnicos.length);
+
   function valorCompativel(valorPlanilha, valorBc) {
     if (valorBc == null) return false;
-    return Math.abs(Number(valorPlanilha) - Number(valorBc)) <= TOLERANCIA;
+    const p = arredondar2(valorPlanilha);
+    const b = arredondar2(valorBc);
+    return Math.abs(p - b) <= TOLERANCIA;
+  }
+
+  /** Remove tudo que não é dígito. */
+  function extrairDigitos(v) {
+    return (v == null ? '' : String(v)).replace(/\D/g, '');
+  }
+
+  /**
+   * Calcula, para um valor de planilha "ampliado", o prefixo em centavos
+   * com o mesmo número de dígitos do valor da blockchain em centavos.
+   * Retorna { prefixInt, centsBc } ou null se não for possível.
+   */
+  function obterPrefixoCentavosPlanilha(valorPlanilha, valorBc) {
+    if (valorPlanilha == null || valorBc == null) return false;
+    const bArred = arredondar2(valorBc);
+    const centsBc = Math.round(bArred * 100); // valor da blockchain em centavos
+    if (!Number.isFinite(centsBc)) return null;
+
+    const digitosBc = String(Math.abs(centsBc));
+    const digitosPlan = extrairDigitos(valorPlanilha);
+    if (!digitosBc || !digitosPlan || digitosPlan.length < digitosBc.length) return null;
+
+    const prefix = digitosPlan.slice(0, digitosBc.length);
+    const prefixInt = Number(prefix);
+    if (!Number.isFinite(prefixInt)) return null;
+
+    return { prefixInt, centsBc };
+  }
+
+  /**
+   * Verifica compatibilidade quando o valor da planilha está "ampliado"
+   * mas contém, no início, a mesma sequência numérica do valor da blockchain
+   * (considerando a blockchain em centavos, 2 casas decimais).
+   *
+   * Ex.: planilha 969330387 vs blockchain 96.933,03 → OK.
+   */
+  function compatibilidadePorSequencia(valorPlanilha, valorBc) {
+    const dados = obterPrefixoCentavosPlanilha(valorPlanilha, valorBc);
+    if (!dados) return false;
+    const { prefixInt, centsBc } = dados;
+
+    const toleranciaCentavos = Math.round(TOLERANCIA * 100); // ex.: 0.01 → 1 centavo
+    return Math.abs(prefixInt - centsBc) <= toleranciaCentavos;
+  }
+
+  /**
+   * Quando o mesmo hash tem várias linhas na planilha, verifica se a SOMA dos prefixos
+   * (cada linha em centavos, com o mesmo número de dígitos da blockchain) bate com a blockchain.
+   * Ex.: linhas 23.213,38 e 13.685,87 → prefixos 2321338 + 1368587 = 3689925 = blockchain 36.899,25.
+   */
+  function somaPrefixosCompativel(linhas, valorBc) {
+    if (!linhas?.length || valorBc == null) return false;
+    const bArred = arredondar2(valorBc);
+    const centsBc = Math.round(bArred * 100);
+    if (!Number.isFinite(centsBc)) return false;
+    const n = String(Math.abs(centsBc)).length;
+    if (!n) return false;
+    let soma = 0;
+    for (const lin of linhas) {
+      const cents = Math.round(Number(lin.valorME) * 100);
+      if (!Number.isFinite(cents)) continue;
+      const str = String(Math.abs(cents));
+      const prefix = str.length >= n ? str.slice(0, n) : str;
+      const prefixInt = parseInt(prefix, 10);
+      if (Number.isFinite(prefixInt)) soma += prefixInt;
+    }
+    const toleranciaCentavos = Math.round(TOLERANCIA * 100);
+    return Math.abs(soma - Math.abs(centsBc)) <= toleranciaCentavos;
   }
 
   /** Tether (ou USDT) → USDT; qualquer outra → USDC. Usado para não sugerir ajuste quando planilha tem "TETHER" e blockchain "USDT". */
@@ -127,6 +198,7 @@ async function runValidation(planilhaPath, opts = {}) {
       const redePreferida = redePlanilha === 'ERC20' ? 'ERC20' : '';
       const bc = await consultarBlockchain(hash, etherscanApiKey, redePreferida);
       const duplicidade = duplicidades.some((d) => d.hash === hash);
+      let ajustePlanilhaParaBlockchain = false;
       let status = validarValores(
         info.valorTotalPlanilha,
         bc ? bc.valor : null,
@@ -188,6 +260,25 @@ async function runValidation(planilhaPath, opts = {}) {
         }
       }
 
+      // Se ainda não for OK, tenta regra de sequência numérica (planilha ampliada).
+      if (status !== 'OK' && valorBcFinal != null && info.valorTotalPlanilha != null) {
+        if (compatibilidadePorSequencia(info.valorTotalPlanilha, valorBcFinal)) {
+          status = 'OK';
+          ajustePlanilhaParaBlockchain = true;
+          motivoErro = null;
+          orientacaoCorrecao = null; // não exibir em inconsistências (valor já considerado compatível)
+        }
+      }
+
+      // Mesmo hash com várias linhas: se a SOMA dos prefixos (em centavos) bater com a blockchain, considera OK.
+      // Ex.: 23.213,38 + 13.685,87 → 2321338 + 1368587 = 3689925 = 36.899,25 na blockchain.
+      if (status !== 'OK' && valorBcFinal != null && info.linhas?.length > 1 && somaPrefixosCompativel(info.linhas, valorBcFinal)) {
+        status = 'OK';
+        ajustePlanilhaParaBlockchain = true;
+        motivoErro = null;
+        orientacaoCorrecao = null;
+      }
+
       if (!bc && status === 'HASH_NAO_ENCONTRADO' && !motivoErro) {
         motivoErro = 'Não encontrado em TRC20 nem ERC20 (ou rede indisponível).';
         log(`  -> Não encontrado. Hash: ${hashKey.slice(0, 16)}...`);
@@ -237,12 +328,34 @@ async function runValidation(planilhaPath, opts = {}) {
         }
       }
 
+      const valorBcArredondado = valorBcFinal != null ? arredondar2(valorBcFinal) : null;
+      let valorPlanilhaFinal = info.valorTotalPlanilha;
+
+      // Se possível, calcula o prefixo em centavos da planilha com o mesmo comprimento da blockchain.
+      const dadosPrefixo = (valorBcArredondado != null && valorPlanilhaFinal != null)
+        ? obterPrefixoCentavosPlanilha(valorPlanilhaFinal, valorBcArredondado)
+        : null;
+
+      // Quando consideramos OK (por arredondamento ou por sequência), exibimos na coluna "Valor planilha"
+      // exatamente o mesmo valor da blockchain, para não haver divergência visual.
+      if (status === 'OK' && valorBcArredondado != null && valorPlanilhaFinal != null) {
+        const soArredondamento =
+          Math.abs(arredondar2(valorPlanilhaFinal) - valorBcArredondado) <= TOLERANCIA;
+        if (soArredondamento || compatibilidadePorSequencia(valorPlanilhaFinal, valorBcFinal) || ajustePlanilhaParaBlockchain) {
+          valorPlanilhaFinal = valorBcArredondado;
+        }
+      } else if (status !== 'OK' && dadosPrefixo) {
+        // Mesmo em divergência, exibimos na planilha o valor correspondente ao prefixo em centavos (prefixo com n dígitos),
+        // para evitar mostrar valores exagerados como 774.803.394 quando o prefixo relevante é, por exemplo, 7748033.
+        valorPlanilhaFinal = dadosPrefixo.prefixInt / 100;
+      }
+
       resultados.set(hashKey, {
         hash,
         rede: redeFinal,
         moeda: moedaFinal,
-        valor_total_planilha: info.valorTotalPlanilha,
-        valor_blockchain: valorBcFinal,
+        valor_total_planilha: valorPlanilhaFinal,
+        valor_blockchain: valorBcArredondado,
         status_validacao: status,
         motivo_erro: motivoErro,
         orientacao_correcao: orientacaoCorrecao,
@@ -251,6 +364,7 @@ async function runValidation(planilhaPath, opts = {}) {
         endereco_destino: bc?.endereco_destino ?? null,
         carteira_destino_ok,
         orientacao_carteira_destino,
+        compat_sequencia: ajustePlanilhaParaBlockchain,
       });
       onProgress(i + 1, hashesUnicos.length);
     } catch (err) {
@@ -282,9 +396,18 @@ async function runValidation(planilhaPath, opts = {}) {
     const info = porHash.get(h);
     const clientes = info?.clientes ? [...info.clientes] : [];
     const statusRedeMoedaDivergente = hashesRedeMoedaDivergentes.has(h.toLowerCase());
+
+    // Em casos da nova lógica de compatibilidade por sequência numérica (planilha ampliada),
+    // nunca usamos status "Ajuste" (CORRECAO_PLANILHA); mantemos como "OK".
+    const usarCorrecaoPlanilha =
+      r?.status_validacao === 'OK' &&
+      !!r?.orientacao_correcao &&
+      !r?.compat_sequencia;
+
     const statusBase = statusRedeMoedaDivergente
       ? 'DIVERGENCIA_REDE_MOEDA'
-      : (r?.status_validacao === 'OK' && r?.orientacao_correcao ? 'CORRECAO_PLANILHA' : (r?.status_validacao ?? null));
+      : (usarCorrecaoPlanilha ? 'CORRECAO_PLANILHA' : (r?.status_validacao ?? null));
+
     return {
       hash: h,
       rede: r?.rede ?? null,
