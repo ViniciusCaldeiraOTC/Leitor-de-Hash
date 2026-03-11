@@ -125,26 +125,47 @@ async function carregarPlanilha(caminhoPlanilha, opts = {}) {
   const idxPrimeiraLinhaDados = idxHeader + 1;
 
   /**
-   * Parse valor aceitando formato brasileiro (52.097,7 = 52097.7) e US (52097.7).
-   * - Se vier número, retorna como está.
-   * - Se tiver vírgula: formato BR (ponto = milhares, vírgula = decimal).
-   * - Se não tiver vírgula e tiver só um ponto com 1–3 dígitos no final: formato US (ponto = decimal).
-   * - Caso contrário: pontos como milhares (remove pontos).
+   * Parse de Valor ME robusto para BRL.
+   *
+   * Regras:
+   * - Se vier número (tipo Excel numérico), usa direto.
+   * - Remove símbolos de moeda, espaços, etc., mantendo apenas dígitos, "." , "," e sinal.
+   * - Se tiver vírgula:
+   *    - assume vírgula como decimal e todos os pontos como separador de milhar.
+   * - Se não tiver vírgula mas tiver ponto:
+   *    - se houver UM ponto e até 2 dígitos depois => ponto decimal (formato US).
+   *    - caso contrário => pontos como milhar (remove pontos).
+   * - Sempre arredonda o resultado para 2 casas decimais (BRL).
    */
   function parseValorME(val) {
-    if (val !== undefined && val !== null && typeof val === 'number' && !Number.isNaN(val)) return val;
-    const s = String(val ?? '0').trim();
-    if (!s) return 0;
-    let br;
-    if (s.includes(',')) {
-      br = s.replace(/\./g, '').replace(',', '.');
-    } else if ((s.match(/\./g) || []).length === 1 && /\.\d{1,3}$/.test(s)) {
-      br = s;
-    } else {
-      br = s.replace(/\./g, '');
+    if (val !== undefined && val !== null && typeof val === 'number' && !Number.isNaN(val)) {
+      return Math.round(val * 100) / 100;
     }
-    const n = parseFloat(br);
-    return Number.isNaN(n) ? 0 : n;
+    let s = String(val ?? '').trim();
+    if (!s) return 0;
+
+    // Mantém apenas dígitos, vírgula, ponto e sinal
+    s = s.replace(/[^\d.,-]+/g, '');
+    if (!s) return 0;
+
+    const temVirgula = s.includes(',');
+    const pontos = (s.match(/\./g) || []).length;
+
+    let normalizado;
+    if (temVirgula) {
+      // Formato BR: vírgula decimal, pontos de milhar
+      normalizado = s.replace(/\./g, '').replace(',', '.');
+    } else if (pontos === 1 && /\.\d{1,2}$/.test(s)) {
+      // Um ponto com até 2 dígitos no final: decimal (US)
+      normalizado = s;
+    } else {
+      // Sem vírgula, ou pontos em posições estranhas: trata todos os pontos como milhar
+      normalizado = s.replace(/\./g, '');
+    }
+
+    const n = parseFloat(normalizado);
+    if (Number.isNaN(n)) return 0;
+    return Math.round(n * 100) / 100;
   }
 
   const linhas = [];
